@@ -245,20 +245,33 @@ def shortest_mismatch_cycle(
     vt_lookup,
     tv_lookup,
     matching_lookup,
+    timer,
 ):
     mismatch_src, mismatch_tgt = mismatch_edge
 
-    tile_graph = nx.Graph()
-    for src, tgt in edges:
-        if stuple((src, tgt)) != stuple((mismatch_src, mismatch_tgt)):
-            tile_graph.add_edge(vt_lookup[src], vt_lookup[tgt])
+    assert stuple((mismatch_src, mismatch_tgt)) not in edges
 
+    timer.start("vertex_lookup")
+    edges_ = [(vt_lookup[src], vt_lookup[tgt]) for src, tgt in edges]
+    timer.stop("vertex_lookup")
+
+    timer.start("create_graph")
+    tile_graph = nx.Graph()
+    tile_graph.add_edges_from(edges_)
+    # for src, tgt in edges:
+    #     if stuple((src, tgt)) != stuple((mismatch_src, mismatch_tgt)):
+    #         tile_graph.add_edge(vt_lookup[src], vt_lookup[tgt])
+    timer.stop("create_graph")
+
+    timer.start("shortest_path")
     shortest_path_tile = nx.shortest_path(
         tile_graph,
         vt_lookup[mismatch_src],
         vt_lookup[mismatch_tgt],
     )
+    timer.stop("shortest_path")
 
+    timer.start("tile_cycle")
     shortest_cycle = [(mismatch_tgt, mismatch_src)]
     for i in range(len(shortest_path_tile) - 1):
         found_ = False
@@ -274,6 +287,7 @@ def shortest_mismatch_cycle(
                 found_ = True
                 break
         assert found_
+    timer.stop("tile_cycle")
 
     return shortest_cycle
 
@@ -431,6 +445,7 @@ def main(
                 vt_lookup,
                 tv_lookup,
                 matching_lookup,
+                timer,
             )
             timer.stop("find_cycle")
 
