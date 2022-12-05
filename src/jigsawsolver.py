@@ -7,6 +7,9 @@ import networkx as nx
 import numpy as np
 import pyomo.environ as pyomo
 
+from constrained_matching import ConstraintMatchingSAT
+from Timing import Timing
+
 matplotlib.use("Agg")
 
 ORIENTATIONS = ["N", "E", "S", "W"]
@@ -126,7 +129,9 @@ class ConstraintMatchingMIP:
 
         model = pyomo.ConcreteModel()
         model.x = pyomo.Var(range(len(edges)), domain=pyomo.Binary)
-        model.obj = pyomo.Objective(expr=1)
+        model.obj = pyomo.Objective(
+            expr=model.x[0] - model.x[0]
+        )  # Placeholder to avoid warning of constant objective
 
         model.matching_constraints = pyomo.ConstraintList()
         for _, adj_edges in adj_edges_lookup.items():
@@ -159,24 +164,14 @@ class ConstraintMatchingMIP:
         return matching
 
 
-def compute_tile_orientation():
-    pass
-
-
 def find_tile_mismatch(
-    matching,
     vt_lookup,
     tv_lookup,
     matching_lookup,
+    stack,
+    tile_attributes,
+    visited_edges,
 ):
-    stack = [vt_lookup[matching[0][0]]]
-
-    tile_attributes = {
-        vt_lookup[stack[0]]: (0, 0, 0),
-    }
-
-    visited_edges = []
-
     while len(stack) > 0:
         tile_id = stack[0]
         tile_vertices = tv_lookup[tile_id]
@@ -226,105 +221,22 @@ def find_tile_mismatch(
 
             if tgt_tile in tile_attributes:
                 if tile_attributes[tgt_tile] != (tgt_row, tgt_col, tgt_orientation):
-                    return True, (src, tgt), visited_edges
+                    return True, stuple((src, tgt))
             else:
                 if tgt_tile not in stack:
                     stack.append(tgt_tile)
                 tile_attributes[tgt_tile] = (tgt_row, tgt_col, tgt_orientation)
-                visited_edges.append(stuple((src, tgt)))
+            visited_edges.append(stuple((src, tgt)))
         del stack[0]
-    return False, None, visited_edges
 
+        if len(stack) == 0 and len(tile_attributes) != len(tv_lookup):
+            # non-connected components
+            unvisited_tile_id = next(
+                t for t in tv_lookup.keys() if t not in tile_attributes
+            )
+            stack.append(unvisited_tile_id)
 
-def find_tile_mismatch_old(
-    matching,
-    vt_lookup,
-    tv_lookup,
-    matching_lookup,
-):
-    stack = [matching[0][0]]
-    visited_tiles = set()
-    vertex_orientations = {
-        stack[0]: ORIENTATIONS[
-            stack[0] % 4
-        ],  # Select specific start orientation for imore intuitive viualization. But any other orientation would also work.
-    }
-    row_mapping = {
-        stack[0]: 0,
-    }
-    col_mapping = {
-        stack[0]: 0,
-    }
-
-    visited_edges = []
-
-    while len(stack) > 0:
-        current_v = stack[0]
-
-        tile_id = vt_lookup[current_v]
-        tile_vertices = tv_lookup[tile_id]
-
-        visited_tiles.add(tile_id)
-        current_orientation = vertex_orientations[current_v]
-        current_row = row_mapping[current_v]
-        current_col = col_mapping[current_v]
-
-        rotation = rotate_array(
-            ORIENTATIONS,
-            ORIENTATIONS.index(current_orientation)
-            - np.where(tile_vertices == current_v)[0][0],
-        )
-
-        for src, rot in zip(tile_vertices, rotation):
-            vertex_orientations[src] = rot
-            row_mapping[src] = current_row
-            col_mapping[src] = current_col
-
-            tgt = matching_lookup.get(src, None)
-
-            if tgt is not None:  # Why it can be None???
-                next_tile = vt_lookup[tgt]
-
-                if next_tile in visited_tiles:
-                    mismatch = False
-                    if COUNTER_ORIENTATIONS[rot] != vertex_orientations[tgt]:
-                        mismatch = True
-                    elif rot in ("N", "S"):
-                        if current_col != col_mapping[tgt]:
-                            mismatch = True
-                        elif rot == "N" and current_row - 1 != row_mapping[tgt]:
-                            mismatch = True
-                        elif rot == "S" and current_row + 1 != row_mapping[tgt]:
-                            mismatch = True
-                    else:
-                        if current_row != row_mapping[tgt]:
-                            mismatch = True
-                        elif rot == "W" and current_col - 1 != col_mapping[tgt]:
-                            mismatch = True
-                        elif rot == "E" and current_col + 1 != col_mapping[tgt]:
-                            mismatch = True
-                    if mismatch:
-                        return True, (src, tgt), visited_edges
-                else:
-                    stack.append(tgt)
-                    vertex_orientations[tgt] = COUNTER_ORIENTATIONS[rot]
-                    if rot == "N":
-                        col_mapping[tgt] = current_col
-                        row_mapping[tgt] = current_row - 1
-                    elif rot == "S":
-                        col_mapping[tgt] = current_col
-                        row_mapping[tgt] = current_row + 1
-                    elif rot == "W":
-                        col_mapping[tgt] = current_col - 1
-                        row_mapping[tgt] = current_row
-                    elif rot == "E":
-                        col_mapping[tgt] = current_col + 1
-                        row_mapping[tgt] = current_row
-                    visited_edges.append(stuple((src, tgt)))
-            if src in stack:
-                stack.remove(src)
-
-    return False, None, visited_edges
+    return False, None
 
 
 def shortest_mismatch_cycle(
@@ -366,13 +278,23 @@ def shortest_mismatch_cycle(
     return shortest_cycle
 
 
-def main():
+def main(
+    save_figs=False,
+    max_iterations=500,
+    remove_strategy="edge",
+):
+    timer = Timing()
+    timer.start("total")
+
     seed = 0
     rng = np.random.default_rng(seed)
 
-    rows, cols = 4, 5
+    # rows, cols = 20, 20
+    rows, cols = 50, 50
 
     tiles = create_jigsaw(rows, cols, rng)
+
+    timer.start("preprocessing")
 
     tile_ids = np.arange(rows * cols).reshape(rows, cols)
     vertex_ids = np.arange(rows * cols * 4).reshape(rows, cols, 4)
@@ -420,28 +342,9 @@ def main():
 
     edges = sorted(set(edges))
 
-    _, ax = plt.subplots(figsize=(15, 10))
-    draw_jigsaw(
-        ax,
-        tiles,
-        tile_ids,
-        tv_lookup,
-        0.3,
-    )
+    timer.stop("preprocessing")
 
-    for src, tgt in edges:
-        ax.plot(
-            [vertex_pos[src][0], vertex_pos[tgt][0]],
-            [vertex_pos[src][1], vertex_pos[tgt][1]],
-            c="black",
-        )
-    plt.savefig("fig/knns.png", dpi=200)
-
-    model = ConstraintMatchingMIP(edges)
-    iteration = 0
-    while True:
-        matching = model.solve()
-
+    if save_figs:
         _, ax = plt.subplots(figsize=(15, 10))
         draw_jigsaw(
             ax,
@@ -451,41 +354,156 @@ def main():
             0.3,
         )
 
-        for src, tgt in matching:
+        for src, tgt in edges:
             ax.plot(
                 [vertex_pos[src][0], vertex_pos[tgt][0]],
                 [vertex_pos[src][1], vertex_pos[tgt][1]],
                 c="black",
             )
-        plt.savefig(f"fig/matching_{iteration}.png", dpi=200)
+        plt.savefig("fig/knns.png", dpi=200)
 
+    # model = ConstraintMatchingMIP(edges)
+    model = ConstraintMatchingSAT(edges)
+    iteration = 0
+    while iteration < max_iterations:
+        timer.start("iteration")
+        print(iteration)
+
+        timer.start("matching")
+        matching = model.solve()
+        timer.stop("matching")
+
+        if save_figs:
+            _, ax = plt.subplots(figsize=(15, 10))
+            draw_jigsaw(
+                ax,
+                tiles,
+                tile_ids,
+                tv_lookup,
+                0.3,
+            )
+
+            for src, tgt in matching:
+                ax.plot(
+                    [vertex_pos[src][0], vertex_pos[tgt][0]],
+                    [vertex_pos[src][1], vertex_pos[tgt][1]],
+                    c="black",
+                )
+            plt.savefig(f"fig/matching_{iteration}.png", dpi=200)
+
+        timer.start("mismatch_check")
         matching_lookup = {src: tgt for src, tgt in matching}
         matching_lookup.update({tgt: src for src, tgt in matching})
 
-        has_mismatch, mismatch_edge, visited_edges = find_tile_mismatch(
-            matching,
-            vt_lookup,
-            tv_lookup,
-            matching_lookup,
-        )
+        stack = [vt_lookup[matching[0][0]]]
+        tile_attributes = {vt_lookup[stack[0]]: (0, 0, 0)}
+        visited_edges = []
+        # mismatch_edges = []
+        removed_edges = []
 
-        if not has_mismatch:
-            break
+        found_mismatches = 0
+        while True:
+            timer.start("find_mismatch")
+            has_mismatch, mismatch_edge = find_tile_mismatch(
+                vt_lookup,
+                tv_lookup,
+                matching_lookup,
+                stack,
+                tile_attributes,
+                visited_edges,
+            )
 
-        cycle = shortest_mismatch_cycle(
-            visited_edges,
-            mismatch_edge,
-            vt_lookup,
-            tv_lookup,
-            matching_lookup,
-        )
+            timer.stop("find_mismatch")
 
-        model.add_mismatch_constraint(cycle)
+            if not has_mismatch:
+                if found_mismatches > 0:
+                    break
+
+                timer.stop(all=True)
+                with open("timing.json", "w") as f:
+                    timer.write(f)
+                return matching
+
+            timer.start("find_cycle")
+            cycle = shortest_mismatch_cycle(
+                visited_edges,
+                mismatch_edge,
+                vt_lookup,
+                tv_lookup,
+                matching_lookup,
+            )
+            timer.stop("find_cycle")
+
+            if save_figs:
+                _, ax = plt.subplots(figsize=(15, 10))
+                draw_jigsaw(
+                    ax,
+                    tiles,
+                    tile_ids,
+                    tv_lookup,
+                    0.3,
+                )
+
+                for src, tgt in matching:
+                    color = "black"
+                    linestyle = "solid"
+                    if stuple((src, tgt)) in removed_edges:
+                        linestyle = "dashed"
+                    elif stuple((src, tgt)) not in visited_edges:
+                        color = "gray"
+
+                    ax.plot(
+                        [vertex_pos[src][0], vertex_pos[tgt][0]],
+                        [vertex_pos[src][1], vertex_pos[tgt][1]],
+                        c=color,
+                        linestyle=linestyle,
+                    )
+
+                for src, tgt in cycle[1:]:
+                    ax.plot(
+                        [vertex_pos[src][0], vertex_pos[tgt][0]],
+                        [vertex_pos[src][1], vertex_pos[tgt][1]],
+                        c="blue" if remove_strategy == "edge" else "red",
+                    )
+
+                ax.plot(
+                    [vertex_pos[mismatch_edge[0]][0], vertex_pos[mismatch_edge[1]][0]],
+                    [vertex_pos[mismatch_edge[0]][1], vertex_pos[mismatch_edge[1]][1]],
+                    c="red",
+                )
+
+                plt.savefig(f"fig/mismatch_{iteration}_{found_mismatches}.png", dpi=200)
+
+            model.add_neg_conjunction(cycle)
+
+            if remove_strategy == "edge":
+                del matching_lookup[mismatch_edge[0]], matching_lookup[mismatch_edge[1]]
+                removed_edges.append(mismatch_edge)
+            else:
+                assert remove_strategy == "cycle"
+                raise Exception("Not working!")
+                for src, tgt in cycle:
+                    del matching_lookup[src], matching_lookup[tgt]
+                removed_edges.extend(cycle)
+
+            found_mismatches += 1
+            plt.close("all")
+            # break
+
+        timer.stop("mismatch_check")
+        timer.stop("iteration")
+
+        with open("timing.json", "w") as f:
+            timer.write(f)
         iteration += 1
         pass
 
-    pass
+    raise Exception()
 
 
 if __name__ == "__main__":
-    main()
+    solution = main(
+        save_figs=False,
+        max_iterations=1000,
+        remove_strategy="edge",
+    )
