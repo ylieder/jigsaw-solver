@@ -25,9 +25,12 @@ class Timing:
             for timer, start in self.running_timers.items():
                 self.times[timer].append(default_timer() - start)
             self.running_timers = dict()
+            return None
         else:
-            self.times[timer].append(default_timer() - self.running_timers[timer])
+            duration = default_timer() - self.running_timers[timer]
+            self.times[timer].append(duration)
             del self.running_timers[timer]
+            return duration
 
     def write(self, f):
         times_ = {k: (v if len(v) > 1 else v[0]) for k, v in self.times.items()}

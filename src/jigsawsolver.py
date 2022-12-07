@@ -1,5 +1,6 @@
 import itertools
 from collections import defaultdict
+from datetime import timedelta
 
 import matplotlib
 import matplotlib.pyplot as plt
@@ -7,7 +8,7 @@ import networkx as nx
 import numpy as np
 import pyomo.environ as pyomo
 
-from constrained_matching import ConstraintMatchingSAT
+from constrained_matching import ConstraintMatchingMIP, ConstraintMatchingSAT
 from Timing import Timing
 
 matplotlib.use("Agg")
@@ -134,49 +135,49 @@ def draw_jigsaw(
     ax.invert_yaxis()
 
 
-class ConstraintMatchingMIP:
-    def __init__(self, edges, solver="glpk") -> None:
-        adj_edges_lookup = defaultdict(list)
+# class ConstraintMatchingMIP:
+#     def __init__(self, edges, solver="glpk") -> None:
+#         adj_edges_lookup = defaultdict(list)
 
-        for i, (src, tgt) in enumerate(edges):
-            adj_edges_lookup[src].append(i)
-            adj_edges_lookup[tgt].append(i)
+#         for i, (src, tgt) in enumerate(edges):
+#             adj_edges_lookup[src].append(i)
+#             adj_edges_lookup[tgt].append(i)
 
-        model = pyomo.ConcreteModel()
-        model.x = pyomo.Var(range(len(edges)), domain=pyomo.Binary)
-        model.obj = pyomo.Objective(
-            expr=model.x[0] - model.x[0]
-        )  # Placeholder to avoid warning of constant objective
+#         model = pyomo.ConcreteModel()
+#         model.x = pyomo.Var(range(len(edges)), domain=pyomo.Binary)
+#         model.obj = pyomo.Objective(
+#             expr=model.x[0] - model.x[0]
+#         )  # Placeholder to avoid warning of constant objective
 
-        model.matching_constraints = pyomo.ConstraintList()
-        for _, adj_edges in adj_edges_lookup.items():
-            lhs = 0
-            for e in adj_edges:
-                lhs += model.x[e]
-            model.matching_constraints.add(lhs == 1)
+#         model.matching_constraints = pyomo.ConstraintList()
+#         for _, adj_edges in adj_edges_lookup.items():
+#             lhs = 0
+#             for e in adj_edges:
+#                 lhs += model.x[e]
+#             model.matching_constraints.add(lhs == 1)
 
-        self.edges = edges
-        self.model = model
-        self.adj_edges_lookup = adj_edges_lookup
+#         self.edges = edges
+#         self.model = model
+#         self.adj_edges_lookup = adj_edges_lookup
 
-        self.solver = pyomo.SolverFactory(solver)
+#         self.solver = pyomo.SolverFactory(solver)
 
-    def add_mismatch_constraint(self, mismatch_cycle):
-        if not hasattr(self.model, "orientation_constraints"):
-            self.model.orientation_constraints = pyomo.ConstraintList()
+#     def add_mismatch_constraint(self, mismatch_cycle):
+#         if not hasattr(self.model, "orientation_constraints"):
+#             self.model.orientation_constraints = pyomo.ConstraintList()
 
-        lhs = 0
-        for e in mismatch_cycle:
-            lhs += self.model.x[self.edges.index(stuple(e))]
-        self.model.orientation_constraints.add(lhs <= len(mismatch_cycle) - 1)
+#         lhs = 0
+#         for e in mismatch_cycle:
+#             lhs += self.model.x[self.edges.index(stuple(e))]
+#         self.model.orientation_constraints.add(lhs <= len(mismatch_cycle) - 1)
 
-    def solve(self):
-        solution = self.solver.solve(self.model)
-        assert solution.solver.termination_condition == "optimal"
+#     def solve(self):
+#         solution = self.solver.solve(self.model)
+#         assert solution.solver.termination_condition == "optimal"
 
-        vars = [bool(self.model.x[i].value) for i in range(len(self.model.x))]
-        matching = np.array(self.edges)[vars]
-        return matching
+#         vars = [bool(self.model.x[i].value) for i in range(len(self.model.x))]
+#         matching = np.array(self.edges)[vars]
+#         return matching
 
 
 def find_tile_mismatch(
@@ -543,7 +544,7 @@ def main(
     iteration = 0
     while iteration < max_iterations:
         timer.start("iteration")
-        print(iteration)
+        # print(iteration)
 
         timer.start("matching")
         matching = model.solve()
@@ -568,14 +569,19 @@ def main(
             plt.savefig(f"fig/matching_{iteration}.png", dpi=200)
 
         timer.start("mismatch_check")
+        timer.start("build_matching_lookup")
+
         matching_lookup = {src: tgt for src, tgt in matching}
         matching_lookup.update({tgt: src for src, tgt in matching})
+        timer.stop("build_matching_lookup")
 
+        timer.start("find_mismatch_edges")
         mismatch_edges, visited_edges = find_mismatches(
             vt_lookup,
             tv_lookup,
             matching_lookup,
         )
+        timer.stop("find_mismatch_edges")
 
         if len(mismatch_edges) == 0:
             timer.stop(all=True)
@@ -583,6 +589,7 @@ def main(
                 timer.write(f)
             return matching
 
+        timer.start("find_cycles")
         cycles = find_cycles(
             vt_lookup,
             tv_lookup,
@@ -590,6 +597,7 @@ def main(
             visited_edges,
             mismatch_edges,
         )
+        timer.stop("find_cycles")
 
         pass
 
@@ -737,30 +745,36 @@ def main(
             #         )
 
             #         plt.savefig(f"fig/mismatch_{iteration}_{found_mismatches}.png", dpi=200)
-
+        timer.start("add_neg_conjunction")
+        # model.add_neg_conjunctions(cycles)
         for cycle in cycles:
             model.add_neg_conjunction(cycle)
+        timer.stop("add_neg_conjunction")
 
-            # if remove_strategy == "edge":
-            #     del matching_lookup[mismatch_edge[0]], matching_lookup[mismatch_edge[1]]
-            #     removed_edges.append(mismatch_edge)
-            # else:
-            #     assert remove_strategy == "cycle"
-            #     raise Exception("Not working!")
-            #     for src, tgt in cycle:
-            #         del matching_lookup[src], matching_lookup[tgt]
-            #     removed_edges.extend(cycle)
+        # if remove_strategy == "edge":
+        #     del matching_lookup[mismatch_edge[0]], matching_lookup[mismatch_edge[1]]
+        #     removed_edges.append(mismatch_edge)
+        # else:
+        #     assert remove_strategy == "cycle"
+        #     raise Exception("Not working!")
+        #     for src, tgt in cycle:
+        #         del matching_lookup[src], matching_lookup[tgt]
+        #     removed_edges.extend(cycle)
 
-            # found_mismatches += 1
+        # found_mismatches += 1
         plt.close("all")
         # break
 
         timer.stop("mismatch_check")
-        timer.stop("iteration")
+        duration = timer.stop("iteration")
 
         with open("timing.json", "w") as f:
             timer.write(f)
         iteration += 1
+
+        print(
+            f">>> {iteration} - {len(mismatch_edges)} - {timedelta(seconds=duration)}"
+        )
         pass
 
     raise Exception()

@@ -1,5 +1,7 @@
 from collections import defaultdict
+from datetime import timedelta
 from functools import reduce
+from timeit import default_timer
 
 import numpy as np
 from ortools.sat.python import cp_model
@@ -17,6 +19,8 @@ class ConstraintMatchingSAT(ConstraintMatchingSolver):
         self.model = model
         self.solver = None
 
+        self.index_lookup = {e: i for i, e in enumerate(edges)}
+
         self.initialize_matching_constraints()
 
     def initialize_matching_constraints(self):
@@ -31,11 +35,12 @@ class ConstraintMatchingSAT(ConstraintMatchingSolver):
             self.model.Add(reduce(lambda x, y: x + y, constraint_vars) == 1)
 
     def add_neg_conjunction(self, edges):
-        constraint_vars = [self.vars[self.edges.index(tuple(sorted(e)))] for e in edges]
+        constraint_vars = [
+            self.vars[self.index_lookup[tuple(sorted(e))]] for e in edges
+        ]
         self.model.Add(
             reduce(lambda x, y: x + y, constraint_vars) <= len(constraint_vars) - 1
         )
-        # self.model.AddBoolXOr(constraint_vars)
 
     def solve(self):
         if self.solver is None:

@@ -29,6 +29,8 @@ class ConstraintMatchingMIP:
         self.model = model
         self.adj_edges_lookup = adj_edges_lookup
 
+        self.index_lookup = {e: i for i, e in enumerate(edges)}
+
         self.solver = pyomo.SolverFactory(solver)
 
     def add_neg_conjunction(self, edges):
@@ -37,7 +39,7 @@ class ConstraintMatchingMIP:
 
         lhs = 0
         for e in edges:
-            lhs += self.model.x[self.edges.index(tuple(sorted(e)))]
+            lhs += self.model.x[self.index_lookup[tuple(sorted(e))]]
         self.model.xor_constraints.add(lhs <= len(edges) - 1)
 
     def solve(self):
