@@ -21,6 +21,21 @@ COUNTER_ORIENTATIONS = {
 }
 
 
+class Edge(tuple):
+    def __init__(self, src, tgt) -> None:
+        if src > tgt:
+            src, tgt = tgt, src
+        super(Edge, self).__init__((src, tgt))
+
+    @property
+    def src(self):
+        return self[0]
+
+    @property
+    def tgt(self):
+        return self[1]
+
+
 def index_iter(arr, axis):
     axis = np.atleast_1d(axis)
     idx_dims = tuple(arr.shape[i] for i in axis)
@@ -292,6 +307,153 @@ def shortest_mismatch_cycle(
     return shortest_cycle
 
 
+def relative_vertex_location(vertex_order, v):
+    return np.where(vertex_order == v)[0][0]
+
+
+def determine_tile_attributes(
+    src_tile_attributes,
+    src_rel_loc,
+    tgt_rel_loc,
+):
+    (
+        current_row,
+        current_col,
+        current_orientation,
+    ) = src_tile_attributes
+
+    src_loc = (src_rel_loc - current_orientation) % 4  # source absolute position
+    tgt_loc = (src_loc - 2) % 4  # 1 <-> 3, 0 <-> 2, target absolute position
+
+    tgt_orientation = (
+        tgt_rel_loc - tgt_loc
+    ) % 4  # number of tile rotations required to bring target vertex from its relative position to its target abolute position
+
+    if tgt_loc == 0:
+        tgt_row = current_row + 1
+        tgt_col = current_col
+    elif tgt_loc == 1:
+        tgt_row = current_row
+        tgt_col = current_col - 1
+    elif tgt_loc == 2:
+        tgt_row = current_row - 1
+        tgt_col = current_col
+    else:
+        assert tgt_loc == 3
+        tgt_row = current_row
+        tgt_col = current_col + 1
+
+    return tgt_row, tgt_col, tgt_orientation
+
+
+def find_mismatches(
+    vt_lookup,
+    tv_lookup,
+    matching_lookup,
+):
+    stack = [vt_lookup[next(iter(matching_lookup))]]
+    tile_attributes = {vt_lookup[stack[0]]: (0, 0, 0)}
+    mismatch_edges = []
+    # visited_edges = set()
+    visited_edges = []
+
+    while len(stack) > 0:
+        tile_id = stack[0]
+        tile_vertices = tv_lookup[tile_id]
+
+        # (
+        #     current_row,
+        #     current_col,
+        #     current_orientation,
+        # ) = tile_attributes[tile_id]
+
+        for src in tile_vertices:
+            tgt = matching_lookup.get(src, None)
+
+            if tgt is None:
+                continue
+
+            tgt_tile = vt_lookup[tgt]
+
+            if stuple((src, tgt)) in visited_edges:
+                continue
+
+            src_rel_loc = relative_vertex_location(
+                tv_lookup[tile_id], src
+            )  # source relative position
+            tgt_rel_loc = relative_vertex_location(
+                tv_lookup[tgt_tile], tgt
+            )  # target relative position
+
+            tgt_row, tgt_col, tgt_orientation = determine_tile_attributes(
+                tile_attributes[tile_id],
+                src_rel_loc,
+                tgt_rel_loc,
+            )
+
+            if tgt_tile in tile_attributes:
+                if tile_attributes[tgt_tile] != (tgt_row, tgt_col, tgt_orientation):
+                    mismatch_edges.append(stuple((src, tgt)))
+                    del matching_lookup[src]
+                    del matching_lookup[tgt]
+                else:
+                    visited_edges.append(stuple((src, tgt)))
+            else:
+                if tgt_tile not in stack:
+                    stack.append(tgt_tile)
+                tile_attributes[tgt_tile] = (tgt_row, tgt_col, tgt_orientation)
+                visited_edges.append(stuple((src, tgt)))
+        del stack[0]
+
+        if len(stack) == 0 and len(tile_attributes) != len(tv_lookup):
+            # non-connected components
+            unvisited_tile_id = next(
+                t for t in tv_lookup.keys() if t not in tile_attributes
+            )
+            stack.append(unvisited_tile_id)
+
+    return mismatch_edges, visited_edges
+
+
+def find_cycles(
+    vt_lookup,
+    tv_lookup,
+    matching_lookup,
+    visited_edges,
+    mismatch_edges,
+):
+    tile_edges = [(vt_lookup[src], vt_lookup[tgt]) for src, tgt in visited_edges]
+
+    tile_graph = nx.Graph()
+    tile_graph.add_edges_from(tile_edges)
+
+    cycles = []
+    for mismatch_src, mismatch_tgt in mismatch_edges:
+        shortest_path_tile = nx.shortest_path(
+            tile_graph,
+            vt_lookup[mismatch_src],
+            vt_lookup[mismatch_tgt],
+        )
+
+        cycle = [(mismatch_tgt, mismatch_src)]
+        for i in range(len(shortest_path_tile) - 1):
+            found_ = False
+            for candidate in tv_lookup[shortest_path_tile[i]]:
+                if vt_lookup.get(
+                    matching_lookup.get(candidate, None), None
+                ) == shortest_path_tile[i + 1] and stuple(
+                    (candidate, matching_lookup[candidate])
+                ) != stuple(  # Edge case: Two tiles have two connecting edges. In this case it is important to select both edges as shortest path and not two times the same edge!
+                    (mismatch_tgt, mismatch_src)
+                ):
+                    cycle.append((candidate, matching_lookup[candidate]))
+                    found_ = True
+                    break
+            assert found_
+        cycles.append(cycle)
+    return cycles
+
+
 def main(
     save_figs=False,
     max_iterations=500,
@@ -303,7 +465,7 @@ def main(
     seed = 0
     rng = np.random.default_rng(seed)
 
-    # rows, cols = 20, 20
+    # rows, cols = 4, 5
     rows, cols = 50, 50
 
     tiles = create_jigsaw(rows, cols, rng)
@@ -409,47 +571,57 @@ def main(
         matching_lookup = {src: tgt for src, tgt in matching}
         matching_lookup.update({tgt: src for src, tgt in matching})
 
-        stack = [vt_lookup[matching[0][0]]]
-        tile_attributes = {vt_lookup[stack[0]]: (0, 0, 0)}
-        visited_edges = []
-        # mismatch_edges = []
-        removed_edges = []
+        mismatch_edges, visited_edges = find_mismatches(
+            vt_lookup,
+            tv_lookup,
+            matching_lookup,
+        )
 
-        found_mismatches = 0
-        while True:
-            timer.start("find_mismatch")
-            has_mismatch, mismatch_edge = find_tile_mismatch(
-                vt_lookup,
+        if len(mismatch_edges) == 0:
+            timer.stop(all=True)
+            with open("timing.json", "w") as f:
+                timer.write(f)
+            return matching
+
+        cycles = find_cycles(
+            vt_lookup,
+            tv_lookup,
+            matching_lookup,
+            visited_edges,
+            mismatch_edges,
+        )
+
+        pass
+
+        if save_figs:
+            _, ax = plt.subplots(figsize=(15, 10))
+            draw_jigsaw(
+                ax,
+                tiles,
+                tile_ids,
                 tv_lookup,
-                matching_lookup,
-                stack,
-                tile_attributes,
-                visited_edges,
+                0.3,
             )
 
-            timer.stop("find_mismatch")
+            for src, tgt in matching:
+                color = "black"
+                linestyle = "solid"
+                if stuple((src, tgt)) in mismatch_edges:
+                    color = "red"
+                elif stuple((src, tgt)) not in visited_edges:
+                    # color = "gray"
+                    linestyle = "dashed"
 
-            if not has_mismatch:
-                if found_mismatches > 0:
-                    break
+                ax.plot(
+                    [vertex_pos[src][0], vertex_pos[tgt][0]],
+                    [vertex_pos[src][1], vertex_pos[tgt][1]],
+                    c=color,
+                    linestyle=linestyle,
+                )
 
-                timer.stop(all=True)
-                with open("timing.json", "w") as f:
-                    timer.write(f)
-                return matching
+            plt.savefig(f"fig/mismatches_{iteration}.png", dpi=200)
 
-            timer.start("find_cycle")
-            cycle = shortest_mismatch_cycle(
-                visited_edges,
-                mismatch_edge,
-                vt_lookup,
-                tv_lookup,
-                matching_lookup,
-                timer,
-            )
-            timer.stop("find_cycle")
-
-            if save_figs:
+            for i, cycle in enumerate(cycles):
                 _, ax = plt.subplots(figsize=(15, 10))
                 draw_jigsaw(
                     ax,
@@ -462,10 +634,18 @@ def main(
                 for src, tgt in matching:
                     color = "black"
                     linestyle = "solid"
-                    if stuple((src, tgt)) in removed_edges:
+                    if stuple((src, tgt)) in mismatch_edges and stuple((src, tgt)) in [
+                        stuple(el) for el in cycle
+                    ]:
+                        color = "red"
+                    elif stuple((src, tgt)) in mismatch_edges:
+                        color = "red"
                         linestyle = "dashed"
+                    elif stuple((src, tgt)) in [stuple(el) for el in cycle]:
+                        color = "blue"
                     elif stuple((src, tgt)) not in visited_edges:
-                        color = "gray"
+                        # color = "gray"
+                        linestyle = "dashed"
 
                     ax.plot(
                         [vertex_pos[src][0], vertex_pos[tgt][0]],
@@ -474,36 +654,106 @@ def main(
                         linestyle=linestyle,
                     )
 
-                for src, tgt in cycle[1:]:
-                    ax.plot(
-                        [vertex_pos[src][0], vertex_pos[tgt][0]],
-                        [vertex_pos[src][1], vertex_pos[tgt][1]],
-                        c="blue" if remove_strategy == "edge" else "red",
-                    )
+                plt.savefig(f"fig/mismatch_{iteration}_{i}.png", dpi=200)
 
-                ax.plot(
-                    [vertex_pos[mismatch_edge[0]][0], vertex_pos[mismatch_edge[1]][0]],
-                    [vertex_pos[mismatch_edge[0]][1], vertex_pos[mismatch_edge[1]][1]],
-                    c="red",
-                )
+            pass
 
-                plt.savefig(f"fig/mismatch_{iteration}_{found_mismatches}.png", dpi=200)
+            # stack = [vt_lookup[matching[0][0]]]
+            # tile_attributes = {vt_lookup[stack[0]]: (0, 0, 0)}
+            # visited_edges = []
+            # # mismatch_edges = []
+            # removed_edges = []
 
+            # found_mismatches = 0
+            # while True:
+            #     timer.start("find_mismatch")
+            #     has_mismatch, mismatch_edge = find_tile_mismatch(
+            #         vt_lookup,
+            #         tv_lookup,
+            #         matching_lookup,
+            #         stack,
+            #         tile_attributes,
+            #         visited_edges,
+            #     )
+
+            #     timer.stop("find_mismatch")
+
+            #     if not has_mismatch:
+            #         if found_mismatches > 0:
+            #             break
+
+            #         timer.stop(all=True)
+            #         with open("timing.json", "w") as f:
+            #             timer.write(f)
+            #         return matching
+
+            #     timer.start("find_cycle")
+            #     cycle = shortest_mismatch_cycle(
+            #         visited_edges,
+            #         mismatch_edge,
+            #         vt_lookup,
+            #         tv_lookup,
+            #         matching_lookup,
+            #         timer,
+            #     )
+            #     timer.stop("find_cycle")
+
+            #     if save_figs:
+            #         _, ax = plt.subplots(figsize=(15, 10))
+            #         draw_jigsaw(
+            #             ax,
+            #             tiles,
+            #             tile_ids,
+            #             tv_lookup,
+            #             0.3,
+            #         )
+
+            #         for src, tgt in matching:
+            #             color = "black"
+            #             linestyle = "solid"
+            #             if stuple((src, tgt)) in removed_edges:
+            #                 linestyle = "dashed"
+            #             elif stuple((src, tgt)) not in visited_edges:
+            #                 color = "gray"
+
+            #             ax.plot(
+            #                 [vertex_pos[src][0], vertex_pos[tgt][0]],
+            #                 [vertex_pos[src][1], vertex_pos[tgt][1]],
+            #                 c=color,
+            #                 linestyle=linestyle,
+            #             )
+
+            #         for src, tgt in cycle[1:]:
+            #             ax.plot(
+            #                 [vertex_pos[src][0], vertex_pos[tgt][0]],
+            #                 [vertex_pos[src][1], vertex_pos[tgt][1]],
+            #                 c="blue" if remove_strategy == "edge" else "red",
+            #             )
+
+            #         ax.plot(
+            #             [vertex_pos[mismatch_edge[0]][0], vertex_pos[mismatch_edge[1]][0]],
+            #             [vertex_pos[mismatch_edge[0]][1], vertex_pos[mismatch_edge[1]][1]],
+            #             c="red",
+            #         )
+
+            #         plt.savefig(f"fig/mismatch_{iteration}_{found_mismatches}.png", dpi=200)
+
+        for cycle in cycles:
             model.add_neg_conjunction(cycle)
 
-            if remove_strategy == "edge":
-                del matching_lookup[mismatch_edge[0]], matching_lookup[mismatch_edge[1]]
-                removed_edges.append(mismatch_edge)
-            else:
-                assert remove_strategy == "cycle"
-                raise Exception("Not working!")
-                for src, tgt in cycle:
-                    del matching_lookup[src], matching_lookup[tgt]
-                removed_edges.extend(cycle)
+            # if remove_strategy == "edge":
+            #     del matching_lookup[mismatch_edge[0]], matching_lookup[mismatch_edge[1]]
+            #     removed_edges.append(mismatch_edge)
+            # else:
+            #     assert remove_strategy == "cycle"
+            #     raise Exception("Not working!")
+            #     for src, tgt in cycle:
+            #         del matching_lookup[src], matching_lookup[tgt]
+            #     removed_edges.extend(cycle)
 
-            found_mismatches += 1
-            plt.close("all")
-            # break
+            # found_mismatches += 1
+        plt.close("all")
+        # break
 
         timer.stop("mismatch_check")
         timer.stop("iteration")
