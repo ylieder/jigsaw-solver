@@ -19,6 +19,14 @@ A solution of this issue is presented in this repo: Instead of trying to match t
     python main.py
     ```
 
+## Setup repo for contribution
+
+1. Install pre-commit hooks. pre-commit is already installed with the requirements into the virtual env.
+    ```bash
+    pre-commit install
+    ```
+
+
 ## Finding a set of edge matching candidates
 
 Before computing the actual puzzle solution using the Constraint Program (CP) defined in the next section we have to find a set of candidates of matching tile edges. Two tile edges should be considered as a matching candidate, if a specified similarity metric between these tile edges is fulfilled. It should be ensured that all matching edges of the final solution are in the set of candidates, because the final solution is a subset of these candidates. Thus, it may make sense to use a looser notion of similarity and starting with a bigger set of matching candidates.
@@ -98,24 +106,23 @@ $$
 The benchmark can be executed by setting `benchmark = True` in `main.py:main()`.
 The benchmark where executed for four different puzzle sizes and four different
 parameter `k` each. The number of matching candidates and total runtime are
-measured (tested on Apple Silicon M1 Pro). The following table shows the results.
-It can be seen that the runtime is highly dependent of both, the size of the puzzle and the KNN parameter `k`. But even if we select `k=2`, the average number of matching candidates per tile edge is much higher. Thus another metric to determine matching candidates is maybe more suitable.
+measured (tested on Apple Silicon M1 Pro).
 
 | Size           | k   | # Matching Candidates |  Runtime (hh:mm:ss) |
 |--------------- |-----|-----------------------|----------|
 | 10 x 10 (100)  | 2   | 484                   | 00:00:00 |
 |                | 4   | 909                   | 00:00:00 |
-|                | 8   | 1708                  | 00:00:02 |
-|                | 16  | 3271                  | 00:00:18 |
-| 30 x 30 (900)  | 2   | 4641                  | 00:00:02 |
-|                | 4   | 8738                  | 00:00:06 |
-|                | 8   | 16503                 | 00:00:23 |
-|                | 16  | 32021                 | 00:01:42 |
-| 40 x 60 (2400) | 2   | 12545                 | 00:00:06 |
-|                | 4   | 23636                 | 00:00:17 |
-|                | 8   | 44814                 | 00:01:04 |
-|                | 16  | 85432                 | 00:04:14 |
-| 61 x 82 (5002) | 2   | 26323                 | 00:00:12 |
-|                | 4   | 49639                 | 00:00:39 |
-|                | 8   | 94231                 | 00:02:17 |
-|                | 16  | 179352                | 00:08:45 |
+|                | 8   | 1,708                  | 00:00:02 |
+|                | 16  | 3,271                  | 00:00:18 |
+| 30 x 30 (900)  | 2   | 4,641                  | 00:00:02 |
+|                | 4   | 8,738                  | 00:00:06 |
+|                | 8   | 16,503                 | 00:00:23 |
+|                | 16  | 32,021                 | 00:01:42 |
+| 40 x 60 (2400) | 2   | 12,545                 | 00:00:06 |
+|                | 4   | 23,636                 | 00:00:17 |
+|                | 8   | 44,814                 | 00:01:04 |
+|                | 16  | 85,432                 | 00:04:14 |
+| 61 x 82 (5002) | 2   | 26,323                 | 00:00:12 |
+|                | 4   | 49,639                 | 00:00:39 |
+|                | 8   | 94,231                 | 00:02:17 |
+|                | 16  | 179,352                | 00:08:45 |
