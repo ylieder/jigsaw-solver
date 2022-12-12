@@ -63,6 +63,7 @@ def find_all_nearest(arr: np.ndarray, k: int) -> np.ndarray:
 def create_jigsaw(
     rows: int,
     cols: int,
+    shuffle: bool = False,
     rng: Optional[np.random.Generator] = None,
 ) -> Tuple[np.ndarray, np.ndarray, Dict[int, np.ndarray]]:
     """
@@ -114,36 +115,45 @@ def create_jigsaw(
     solution = solution[solution[:, 0].argsort()]
 
     tiles = tiles.reshape((-1, 4))
+    vertex_ids = vertex_ids.reshape((-1, 4))
 
     pos = determine_grid_vertex_positions(rows, cols)
 
-    return tiles, solution[solution[:, 0].argsort()], pos
-
-    # TODO
-
-    # Flatten tiles
-    tiles = tiles[tile_order, :]
+    if not shuffle:
+        return tiles, solution[solution[:, 0].argsort()], pos
 
     ## Shuffle tiles
-    tile_order = np.random.permutation(rows * cols)
+    tile_order = rng.permutation(rows * cols)
 
-    vertex_ids_new = vertex_ids.reshape(-1, 4)[tile_order, :]
-    permutation_lookup = {
-        from_id: to_id
-        for from_id, to_id in zip(vertex_ids.flatten(), vertex_ids_new.flatten())
-    }
-    vertex_ids = vertex_ids_new
+    tiles = tiles[tile_order]
+    vertex_ids_new = vertex_ids[tile_order]
+
+    pos_1 = np.array(pos[1])[tile_order]
 
     # Rotate tiles arbitrarly
-    tile_rotation = np.random.randint(0, 4, rows * cols)
+    tile_rotation = rng.integers(0, 4, rows * cols)
     for i in range(rows * cols):
         tiles[i] = np.roll(tiles[i], tile_rotation[i])
-        vertex_ids[i] = np.roll(vertex_ids[i], tile_rotation[i])
+        vertex_ids_new[i] = np.roll(vertex_ids_new[i], tile_rotation[i])
+
+    permutation_lookup = {
+        from_id: to_id
+        for to_id, from_id in zip(vertex_ids.flatten(), vertex_ids_new.flatten())
+    }
 
     # Substitute new vertex order
     solution = np.vectorize(lambda x: permutation_lookup[x])(solution)
+    pos_0 = {permutation_lookup[k]: v for k, v in pos[0].items()}
 
-    return tiles, solution
+    pos = (pos_0, pos_1)
+
+    # sort within row
+    solution = np.sort(solution)
+
+    # sort rows
+    solution = solution[solution[:, 0].argsort()]
+
+    return tiles, solution, pos
 
 
 def solve_jigsaw(
