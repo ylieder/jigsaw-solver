@@ -92,3 +92,30 @@ $$
 ## Solution
 
 ![Candidate edges in matching Graph](docs/fig/solution.png)
+
+## Benchmark
+
+The benchmark can be executed by setting `benchmark = True` in `main.py:main()`.
+The benchmark where executed for four different puzzle sizes and four different
+parameter `k` each. The number of matching candidates and total runtime are
+measured (tested on Apple Silicon M1 Pro). The following table shows the results.
+It can be seen that the runtime is highly dependent of both, the size of the puzzle and the KNN parameter `k`. But even if we select `k=2`, the average number of matching candidates per tile edge is much higher. Thus another metric to determine matching candidates is maybe more suitable.
+
+| Size           | k   | # Matching Candidates |  Runtime (hh:mm:ss) |
+|--------------- |-----|-----------------------|----------|
+| 10 x 10 (100)  | 2   | 484                   | 00:00:00 |
+|                | 4   | 909                   | 00:00:00 |
+|                | 8   | 1708                  | 00:00:02 |
+|                | 16  | 3271                  | 00:00:18 |
+| 30 x 30 (900)  | 2   | 4641                  | 00:00:02 |
+|                | 4   | 8738                  | 00:00:06 |
+|                | 8   | 16503                 | 00:00:23 |
+|                | 16  | 32021                 | 00:01:42 |
+| 40 x 60 (2400) | 2   | 12545                 | 00:00:06 |
+|                | 4   | 23636                 | 00:00:17 |
+|                | 8   | 44814                 | 00:01:04 |
+|                | 16  | 85432                 | 00:04:14 |
+| 61 x 82 (5002) | 2   | 26323                 | 00:00:12 |
+|                | 4   | 49639                 | 00:00:39 |
+|                | 8   | 94231                 | 00:02:17 |
+|                | 16  | 179352                | 00:08:45 |
