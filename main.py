@@ -19,7 +19,7 @@ def verify_solution(solution, real_solution):
 def benchmark(
     sizes: List[Tuple[int, int]],
     k: List[int],
-    repetitions: int,
+    repetitions: int = 1,
 ) -> Dict:
     benchmark_results = {}
 
@@ -62,9 +62,8 @@ def main():
 
     if run_benchmark:
         benchmark_results = benchmark(
-            sizes=[(10, 10), (30, 30), (40, 60), (61, 82), (100, 100)],
+            sizes=[(10, 10), (30, 30), (40, 60), (61, 82)],
             k=[2, 4, 8, 16],
-            repetitions=4,
         )
 
         with open("benchmark_results.json", "w") as f:
@@ -80,10 +79,11 @@ def main():
 
     rows = 4
     cols = 5
+    shuffle_tiles = True
 
     k = 2
 
-    tiles, real_solution, pos = create_jigsaw(rows, cols, rng)
+    tiles, real_solution, pos = create_jigsaw(rows, cols, shuffle_tiles, rng)
 
     start = timer()
     found_solution, solution, candidates = solve_jigsaw(
@@ -96,7 +96,7 @@ def main():
 
     if not found_solution:
         print("No solution found! :(")
-    elif (solution[solution[:, 0].argsort()] != real_solution).any():
+    elif not verify_solution(solution, real_solution):
         print("Solution is not correct! :(")
     else:
         print("Found correct solution! :)")
