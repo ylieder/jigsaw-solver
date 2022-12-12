@@ -71,7 +71,7 @@ def main():
 
         return
 
-    seed = 3517189398
+    seed = np.random.randint(0, 2**32)
     print("Seed: ", seed)
     rng = np.random.default_rng(seed)
 
