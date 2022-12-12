@@ -31,6 +31,35 @@ def stuple(iterable: Iterable) -> Tuple:
     return tuple(sorted(iterable))
 
 
+def find_all_nearest(arr: np.ndarray, k: int) -> np.ndarray:
+    """
+    Computes the k nearest values of each element in array and returns its indices.
+
+    Returns array of shape (arr.shape[0], k), where row[i] contains the indices of the
+    k closest elements to arr[i], sorted ascending by distance to arr[i].
+    """
+    assert arr.ndim == 1
+    assert k <= arr.shape[0]
+
+    idxs = np.argsort(arr)
+    arr_sorted = arr[idxs]
+    all_nearest = np.empty((arr.shape[0], k), dtype=np.int)
+
+    l = 0
+    r = k
+    for i in range(arr.shape[0]):
+        val = arr_sorted[i]
+        while r < arr.shape[0] - 1 and abs(val - arr_sorted[l]) > abs(
+            val - arr_sorted[r]
+        ):
+            r += 1
+            l += 1
+        order = np.abs(arr_sorted[l:r] - val).argsort()
+        all_nearest[i] = idxs[l:r][order]
+
+    return all_nearest[idxs.argsort()]
+
+
 def create_jigsaw(
     rows: int,
     cols: int,
@@ -146,14 +175,14 @@ def solve_jigsaw(
     # (rows * cols, 4) -> (rows * cols * 4)
     vertex_values = jigsaw_tiles.flatten()
 
+    all_nearest = find_all_nearest(vertex_values, k + 4)
+
     # Compute set of matching candidates as k nearest neighbors for each vertex
     candidate_edges = set()
     for v_id, v_val in zip(vertex_ids, vertex_values):
         if not np.isnan(v_val):
-            order = np.argsort(np.abs(vertex_values - v_val))
-
             # Select k nearest neigbors. Don't select neighbors on same tile.
-            knns = vertex_ids[order][vertex_ids[order] // 4 != v_id // 4][:k]
+            knns = all_nearest[v_id, all_nearest[v_id] // 4 != v_id // 4][:k]
 
             candidate_edges |= {stuple([v_id, neighbor_id]) for neighbor_id in knns}
 
